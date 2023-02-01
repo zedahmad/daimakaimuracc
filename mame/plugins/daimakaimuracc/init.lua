@@ -1,4 +1,4 @@
- exports = {}
+exports = {}
 exports.name = "daimakaimuracc"
 exports.version = "0.0.1"
 exports.description = "Ghouls 'n' Ghosts Crowd Control"
@@ -21,16 +21,11 @@ function daimakaimuracc.startplugin()
         mem = manager.machine.devices[":maincpu"].spaces["program"]
     end)
 
-	-- Cleanup flags
-	local resetArthurAction = false
-	local resetArthurAction2 = false
-
-	local running = true
-
     -- Table of functions to execute as soon as game is next available
     -- Value format: {functionReference, {table, of, func, args}, delayInFrames}
-	local doNext = {}
-	local doNextForced = {}
+    -- The function will be repeated as long as it returns true
+	local doNext = {} -- Runs at next moment game is in "ready" state
+	local doNextForced = {} -- Always runs on next frame
 
     -- Labels for console use
 	local armourLabels = {}
@@ -70,6 +65,7 @@ function daimakaimuracc.startplugin()
 	--sock:open("socket." .. host .. ":" .. port)
 
     -- Memory manager proxy functions
+    -- Making these available in the global namespace makes it simple to execute them from callFuncs
     function w8 (addr, val)     mem:write_direct_u8(addr, val)      end
     function w16(addr, val)     mem:write_direct_u16(addr, val)     end
     function w32(addr, val)     mem:write_direct_u32(addr, val)     end
@@ -232,7 +228,7 @@ function daimakaimuracc.startplugin()
             message = message .. " no iframes"
             w16(0xBD36, 0) -- Set invincibility timer to start at 0
 
-            table.insert(doNext, {w16, {0xBD36, 0x72}}) -- Queue up iframes reenable
+            table.insert(doNextForced, {w16, {0xBD36, 0x72}, 4}) -- Queue up iframes reenable
         end
 
         print(message)
@@ -297,23 +293,29 @@ function daimakaimuracc.startplugin()
 		table.insert(doNext, {w16, {0xBD36, n}}) -- Queue up invincibility timer reset
 	end
 
-	function transform()
+	function transform(s)
 	    if not mem then return end
-
-        print("Transforming")
 
         -- Check health value
 	    if (r8(0xFF07AA) == 0) then
-	        w32(0xFF0952, 0xD09E) -- Old man
+	        oldTransform(s)
         else
-            w32(0xFF0952, 0xD526) -- Duck
+            duckTransform(s)
         end
 	end
 
-	function duckTransform()
+	function duckTransform(s)
 	    if not mem then return end
 
-	    print("Duck transformation")
+	    local message = "Transforming into duck"
+
+	    if (s ~= nil) then
+	        message = message .. string.format(" for %d seconds", s)
+	        w16(0xD594, s * 60) -- Override duck transform timer
+	        table.insert(doNextForced, {w16, {0xD594, 0x105}, 4}) -- Queue up timer change undo
+        end
+
+	    print(message)
 	    if (r8(0xFF07AA) == 0) then
 	        w8(0xFF07AA, 1) -- Set health to 1
 	        table.insert(doNext, {w8, {0xFF07AA, 0}}) -- Queue health reset
@@ -341,15 +343,22 @@ function daimakaimuracc.startplugin()
         end
 	end
 
-    -- TODO: cancel armor status reset if arthur has died?  how to do this?
-	function oldTransform()
+	function oldTransform(s)
 	    if not mem then return end
 
-	    print("Old man transformation")
+	    local message = "Transforming into old man"
+
+        if (s ~= nil) then
+            message = message .. string.format(" for %d seconds", s)
+            w16(0xD126, s * 60) -- Override old transform timer
+            table.insert(doNextForced, {w16, {0xD126, 0x17D}, 4}) -- Queue up timer change undo
+        end
+
+	    print(message)
         if (r8(0xFF07AA) == 1) then
             w8(0xFF07AA, 0) -- Set health to 0
 
-            table.insert(doNextForced, {oldUntransform, {r16(0xFF07AB)}, 16})
+            table.insert(doNextForced, {oldUntransform, {r16(0xFF07AB)}, 4})
         end
 
 	    w32(0xFF0952, 0xD09E) -- Do old man transform
