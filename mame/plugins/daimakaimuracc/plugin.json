@@ -1,0 +1,10 @@
+{
+  "plugin": {
+    "name": "daimakaimuracc",
+    "description": "Ghouls 'n' Ghosts Crowd Control",
+    "version": "0.0.1",
+    "author": "Zed Ahmad",
+    "type": "plugin",
+    "start": "false"
+  }
+}
