@@ -8,24 +8,52 @@ exports.author = { name = "Zed Ahmad" }
 local daimakaimuracc = exports
 
 function daimakaimuracc.startplugin()
-	local json = require "json"
+    -- Effects config
+    local chaosMode = true
+    local chaosTick = 5 -- How frequently to activate random effects, in seconds
+    local timerRange = 7 -- Range from 1 to x in seconds to use for effect timers
+    local timerOffset = 5 -- Offset in seconds to use for random timer range (1-7 + 5 = 6-12)
 
-    -- Frame counter
+    -- Communication config
+    local useRemote = true
+    local host = "localhost"
+    local port = "3000"
+    local tick = 20 -- How frequently to process requests, in frames
+
+    -- Init values
+    local hud = require "daimakaimuracc/gnghud"
+    local effectActive = false
+    local statusText = ""
+    local statusTimer = 0
+    local showTimer = false
+
+	-- Init socket
+	local sock
+	if (useRemote) then
+        sock = emu.file("wr")
+        sock:open("socket." .. host .. ":" .. port)
+    end
+
+    -- Frame counters
 	local frames = 0
+	local activeFrames = 0
 
-    -- Memory manager
+    -- Init Memory manager, Screen device
 	local mem
-
-    -- Init memory manager
+	local screen
     emu.register_start(function()
         mem = manager.machine.devices[":maincpu"].spaces["program"]
+        screen = manager.machine.screens[":screen"]
     end)
 
     -- Table of functions to execute as soon as game is next available
     -- Value format: {functionReference, {table, of, func, args}, delayInFrames}
     -- The function will be repeated as long as it returns true
-	local doNext = {} -- Runs at next moment game is in "ready" state
-	local doNextForced = {} -- Always runs on next frame
+	local nextFuncs = {} -- Runs at next moment game is in "ready" state
+	local nextFuncsForced = {} -- Always runs on next frame
+
+	-- Effect queue
+	local effectQueue = {}
 
     -- Labels for console use
 	local armourLabels = {}
@@ -42,27 +70,24 @@ function daimakaimuracc.startplugin()
 	weaponLabels[5] = "discus"
 	weaponLabels[6] = "psycho cannon"
 
-	-- Arthur status values (address = 0xFF0954)
-	-- 0xB5C2 = "normal"
-	-- 0xBC14 = damage init
-	-- 0xBCD2 = damage (boost animation)
-	-- 0xBD16 = landing from damage boost
-	-- 0xBD42 = post damage invuln
-	-- 0xBD56 = invincibility with timer
-	-- 0xBD70 = invincibility (indefinite?)
-	-- 0xD2B6 = death init (received death blow)
-	-- 0xD34A = dead
-	-- 0xC31E = pick up key init
-	-- 0xC316 = picked up key - standing
-	-- 0xC34A = win pose
-	-- 0xC364 = running into door
-
-	-- Arthur status2 values (address = 0xFF0968)
-	-- 0xC920 = gold armour pickup
-	-- 0xCB76 = cast magic
-
-	--local sock = emu.file("wr")
-	--sock:open("socket." .. host .. ":" .. port)
+	-- Effect constants
+	local RANDOM_WEAPON = 1
+	local DOWNGRADE_ARMOUR = 2
+	local UPGRADE_ARMOUR = 3
+	local FAST_RUN = 4
+	local SLOW_RUN = 5
+	local HIGH_JUMP = 6
+	local LOW_JUMP = 7
+	local TRANSFORM_DUCK = 8
+	local TRANSFORM_OLD = 9
+	local INVINCIBILITY = 10
+	local SUBTRACT_TIME = 11
+	local RANDOM_RANK = 12
+	local INCREASE_RANK = 13
+	local DECREASE_RANK = 14
+	local MAX_RANK = 15
+	local DEATH = 16
+	local LOW_GRAVITY = 17
 
     -- Memory manager proxy functions
     -- Making these available in the global namespace makes it simple to execute them from callFuncs
@@ -73,23 +98,45 @@ function daimakaimuracc.startplugin()
     function r16(addr)          return mem:read_direct_u16(addr)    end
     function r32(addr)          return mem:read_direct_u32(addr)    end
 
-    function callFuncs(funcs, decrementTimer)
+    function setStatus(text, timer, st)
+        effectActive = true
+        statusText = text
+        statusTimer = frames + timer * 60
+        showTimer = st
+    end
+
+	function resetStatus()
+	    effectActive = false
+	    statusText = ""
+	    statusTimer = 0
+	    showTimer = false
+	end
+	
+	function doNext(params)
+	    table.insert(nextFuncs, params)
+	end
+
+	function doNextForced(params)
+	    table.insert(nextFuncsForced, params)
+	end
+
+    function callFuncs(funcs)
         for k, v in pairs(funcs) do
             if (v[3] == nil or v[3] == 0) then
-                local loop = v[1](table.unpack(v[2]))
-                if (not loop) then
+                local shouldRepeat = v[1](table.unpack(v[2]))
+                if (not shouldRepeat) then
                     funcs[k] = nil
                 end
-            elseif (decrementTimer) then
+            else
                 v[3] = v[3] - 1
             end
         end
     end
 
-	function arthurAvailable(frameStart)
+	function arthurAvailable()
 		if not mem then return false end
 
-		callFuncs(doNextForced, frameStart)
+		callFuncs(nextFuncsForced)
 
         local arthurAction = r32(0xFF0952)
         local arthurAction2 = r32(0xFF0966)
@@ -111,7 +158,7 @@ function daimakaimuracc.startplugin()
             print(string.format("Adjusting run speed by %x for %d seconds", s, t))
 
             -- Queue effect disable with timer
-            table.insert(doNextForced, {setRunSpeed, {0, 0}, t * 60})
+            doNextForced({setRunSpeed, {0, 0}, t * 60})
         else
             print("Resetting run speed")
         end
@@ -153,9 +200,10 @@ function daimakaimuracc.startplugin()
 	function increaseRank()
 	    if not mem then return end
 
-	    local current = r8(0xFF092B) / 8
+	    local current = math.floor(r8(0xFF092B) / 8)
 
 	    if (current < 15) then
+	        setStatus("Rank Up: " .. current + 1, 2, false)
 	        setRank(current + 1)
         end
 	end
@@ -163,9 +211,10 @@ function daimakaimuracc.startplugin()
 	function decreaseRank()
 	    if not mem then return end
 
-	    local current = r8(0xFF092B) / 8
+	    local current = math.floor(r8(0xFF092B) / 8)
 
         if (current > 0) then
+            setStatus("Rank Down: " .. current - 1, 2, false)
             setRank(current - 1)
         end
 	end
@@ -185,7 +234,7 @@ function daimakaimuracc.startplugin()
             print(string.format("Adjusting jump height by %x for %d seconds", h, t))
 
             -- Queue effect disable with timer
-            table.insert(doNextForced, {setJumpHeight, {0, 0}, t * 60})
+            doNextForced({setJumpHeight, {0, 0}, t * 60})
         else
             print("Resetting jump height")
         end
@@ -195,6 +244,24 @@ function daimakaimuracc.startplugin()
         w16(0xC1CC, 0x03C0 + h) -- old man
         w16(0xC1E4, 0x0420 + h) -- duck
         w16(0x3AFDA, 0x300 + math.floor(h * 0.727)) -- Quicksand
+    end
+
+    function setGravity(g, t)
+        if not mem then return end
+
+        if (t > 0) then
+            print(string.format("Adjusting gravity by %x for %d seconds", g, t))
+
+            doNextForced({setGravity, {0, 0}, t * 60})
+        else
+            print("Resetting gravity")
+        end
+
+        setJumpHeight(-0x160, t)
+        w16(0xC1D6, 0xFFC8 - g) -- steel/naked
+        w16(0xC1DE, 0xFFC8 - g) -- gold armour
+        w16(0xC1CE, 0xFFC8 - g) -- old man
+        w16(0xC1E6, 0xFFC8 - g) -- duck
     end
 
 	function death()
@@ -213,42 +280,69 @@ function daimakaimuracc.startplugin()
             if (noIframes) then
                 w32(0xB5CC, 0xBD5C) -- After damage, skip iframes
             else
-                w8(0xFF0931, 0x01)
-                w32(0xB5CC, 0xBD34) -- After damage, jump to iframes func
+                w8(0xFF0931, 0x01) -- Enable invincibility
+                w32(0xB5CC, 0xBD34) -- After damage, jump to iframes func (runs down iframes timer & makes arthur sprite flash)
             end
             w32(0xB5D4, 0xBCA8) -- Skip boost portion of damage function
 
-            w16(0xBD36, 0x99)
-            table.insert(doNextForced, {w32, {0xFF07A2, r32(0xFF07A2)}}) -- Queue up status reset
-            table.insert(doNext, {w32, {0xB5CC, 0xBC14}, 1}) -- Queue up boost reenable
-            table.insert(doNext, {w32, {0xB5D4, 0xBC14}, 1}) -- Queue up boost reenable
+            -- Set arthur status2 correctly so he maintains his left/right orientation
+            if (r8(0xFF07A3) < 80) then
+                w8(0xFF07A3, 84)
+            else
+                w8(0xFF07A3, 44)
+            end
+
+            doNextForced({w32, {0xFF07A2, r32(0xFF07A2)}}) -- Queue up arthur status reset
+            doNext({w32, {0xB5CC, 0xBC14}, 4}) -- Reset damage func modifications
+            doNext({w32, {0xB5D4, 0xBC14}, 4}) -- Reset damage func modifications
         end
 
         if (noIframes) then
             message = message .. " no iframes"
             w16(0xBD36, 0) -- Set invincibility timer to start at 0
 
-            table.insert(doNextForced, {w16, {0xBD36, 0x72}, 4}) -- Queue up iframes reenable
+            doNextForced({w16, {0xBD36, 0x72}, 4}) -- Queue up iframes reenable
         end
 
         print(message)
 
         w8(0xFF07AA, 0) -- Health = 0
         w8(0xFF07A2, 0x05) -- Damage status
-        if (r8(0xFF07A3) < 80) then
-            w8(0xFF07A3, 84)
-        else
-            w8(0xFF07A3, 44)
-        end
+	end
+
+	function randomWeapon()
+	    if not mem then return end
+
+	    local current = r8(0xFF07C6)
+        local new = nil
+
+        repeat
+            new = math.random(7) - 1
+        until(current ~= new)
+
+        setWeapon(new)
 	end
 
 	function setWeapon(id)
 		if not mem then return end
 
 		print("Give weapon: " .. weaponLabels[id])
+		setStatus(weaponLabels[id], 2, false)
 		w8(0xFF07C6, id) -- Set weapon value
 		w32(0xFF0966, 0x614E) -- Run HUD update code
-		table.insert(doNextForced, {w32, {0xFF0966, 0xB658}}) -- Queue up return to normal state
+		doNextForced({w32, {0xFF0966, 0xB658}}) -- Queue up return to normal state
+	end
+
+	function downgradeArmour()
+        local current = r8(0xFF07AC)
+        if current > 1 then setArmour(current - 1) end
+	end
+
+	function upgradeArmour()
+	    if not mem then return end
+
+        local current = r8(0xFF07AC)
+        if current < 3 then setArmour(current + 1) end
 	end
 
 	function setArmour(id)
@@ -273,7 +367,7 @@ function daimakaimuracc.startplugin()
             elseif (current == 3) then
                 -- Currently gold - downgrade to naked first, then upgrade to steel
                 damage(true, true) -- Damage without boost and without iframes
-                table.insert(doNext, {w32, {0xFF0952, 0xD260}}) -- Queue up armour upgrade from naked to steel
+                doNext({w32, {0xFF0952, 0xD260}}) -- Queue up armour upgrade from naked to steel
             end
 		elseif (id == 3) then
 		    -- Gold
@@ -290,7 +384,7 @@ function daimakaimuracc.startplugin()
 		w32(0xFF0952, 0xBD34)
 		w16(0xBD36, n * 60) -- Set invincibility timer
 
-		table.insert(doNext, {w16, {0xBD36, n}}) -- Queue up invincibility timer reset
+		doNext({w16, {0xBD36, n}}) -- Queue up invincibility timer reset
 	end
 
 	function transform(s)
@@ -304,6 +398,19 @@ function daimakaimuracc.startplugin()
         end
 	end
 
+	function duckUntransform()
+	    if not mem then return end
+
+	    local arthurAction = r32(0xFF0952)
+
+	    if (arthurAction == 0xD548) then
+	        -- Still duck
+	        return true
+        else
+            resetStatus()
+        end
+	end
+
 	function duckTransform(s)
 	    if not mem then return end
 
@@ -311,17 +418,18 @@ function daimakaimuracc.startplugin()
 
 	    if (s ~= nil) then
 	        message = message .. string.format(" for %d seconds", s)
-	        w16(0xD594, s * 60) -- Override duck transform timer
-	        table.insert(doNextForced, {w16, {0xD594, 0x105}, 4}) -- Queue up timer change undo
+	        w16(0xD594, (s - 1) * 60) -- Override duck transform timer
+	        doNextForced({w16, {0xD594, 0x105}, 4}) -- Queue up timer change undo
         end
 
 	    print(message)
 	    if (r8(0xFF07AA) == 0) then
 	        w8(0xFF07AA, 1) -- Set health to 1
-	        table.insert(doNext, {w8, {0xFF07AA, 0}}) -- Queue health reset
+	        doNext({w8, {0xFF07AA, 0}}) -- Queue health reset
         end
 
         w32(0xFF0952, 0xD526) -- Do duck transform
+        doNextForced({duckUntransform, {}, 4})
 	end
 
 	function oldUntransform(armourStatus)
@@ -332,15 +440,17 @@ function daimakaimuracc.startplugin()
 	    if (arthurAction == 0xD0B0) then
 	        -- Still old man, call again later
 	        return true -- repeat
-        elseif (arthurAction == 0xB5C2) then
+        elseif (armourStatus ~= nil and arthurAction == 0xB5C2) then
             -- Back to normal, do untransform
             print("Resetting armour")
-            table.insert(doNext, {w8, {0xFF07AA, 1}})
-            table.insert(doNext, {w16, {0xFF07AB, armourStatus}})
+            doNext({w8, {0xFF07AA, 1}})
+            doNext({w16, {0xFF07AB, armourStatus}})
         else
            -- Something else happened, don't reset armour
            print("Cancelling old untransform")
         end
+
+        resetStatus()
 	end
 
 	function oldTransform(s)
@@ -350,15 +460,17 @@ function daimakaimuracc.startplugin()
 
         if (s ~= nil) then
             message = message .. string.format(" for %d seconds", s)
-            w16(0xD126, s * 60) -- Override old transform timer
-            table.insert(doNextForced, {w16, {0xD126, 0x17D}, 4}) -- Queue up timer change undo
+            w16(0xD126, (s - 1) * 60) -- Override old transform timer
+            doNextForced({w16, {0xD126, 0x17D}, 4}) -- Queue up timer change undo
         end
 
 	    print(message)
         if (r8(0xFF07AA) == 1) then
             w8(0xFF07AA, 0) -- Set health to 0
 
-            table.insert(doNextForced, {oldUntransform, {r16(0xFF07AB)}, 4})
+            doNextForced({oldUntransform, {r16(0xFF07AB)}, 4})
+        else
+            doNextForced({oldUntransform, {}, 4})
         end
 
 	    w32(0xFF0952, 0xD09E) -- Do old man transform
@@ -444,26 +556,134 @@ function daimakaimuracc.startplugin()
         end
 	end
 
+	function getRemoteEffects()
+	    if not sock then return end
+
+	    local effect = nil
+	    repeat
+	        buffer = sock:read(1024)
+
+	        if (buffer ~= nil) then
+	            for str in string.gmatch(buffer, "([0-9]+)") do
+	                table.insert(effectQueue, tonumber(str))
+	            end
+	        end
+	    until (effect == nil)
+	end
+
+	function chaos()
+	    activeFrames = activeFrames + 1
+        if (activeFrames % (chaosTick * 60) == 0) then
+            -- Logic below is to collapse all rank related effects into 1 chance
+            local ef = math.random(14)
+            if (ef == 12) then
+                ef = math.random(4) + 11 -- from 12 - 15
+            elseif (ef == 13) then
+                ef = 16
+            elseif (ef == 14) then
+                ef = 17
+            end
+            table.insert(effectQueue, ef)
+        end
+	end
+
     -- Perform effects
 	emu.register_frame(function()
+	    frames = frames + 1
+
+	    if (useRemote and (frames % tick == 0)) then
+	        getRemoteEffects()
+        end
+
 	    -- Don't perform modifications when game/arthur are in certain states to avoid glitches
 	    if arthurAvailable(true) then
-            frames = frames + 1
+	        callFuncs(nextFuncs)
 
-            -- 5 second timer (roughly)
-            if (frames % 300 == 0) then
-                randomEffect()
+	        if chaosMode then chaos() end
+
+            if (not effectActive) then
+                for k,v in pairs(effectQueue) do
+                    local rtime = math.random(timerRange) + timerOffset
+
+                    if (v == RANDOM_WEAPON) then
+                        randomWeapon()
+                    elseif (v == DOWNGRADE_ARMOUR) then
+                        setStatus("Armour Down", 2, false)
+                        downgradeArmour()
+                    elseif (v == UPGRADE_ARMOUR) then
+                        setStatus("Armour Up", 2, false)
+                        upgradeArmour()
+                    elseif (v == FAST_RUN) then
+                        setStatus("Fast Run", rtime, true)
+                        setRunSpeed(0x400, rtime)
+                    elseif (v == SLOW_RUN) then
+                        setStatus("Slow Run", rtime, true)
+                        setRunSpeed(-150, rtime)
+                    elseif (v == HIGH_JUMP) then
+                        setStatus("High Jump", rtime, true)
+                        setJumpHeight(0x200, rtime)
+                    elseif (v == LOW_JUMP) then
+                        setStatus("Low Jump", rtime, true)
+                        setJumpHeight(-0x200, rtime)
+                    elseif (v == TRANSFORM_DUCK) then
+                        setStatus("Duck", rtime, true)
+                        duckTransform(rtime)
+                    elseif (v == TRANSFORM_OLD) then
+                        setStatus("Old Man", rtime, true)
+                        oldTransform(rtime)
+                    elseif (v == INVINCIBILITY) then
+                        setStatus("Invincible", rtime, true)
+                        invincibility(rtime)
+                    elseif (v == SUBTRACT_TIME) then
+                        setStatus("Time Down", 2, false)
+                        subtractTime(30)
+                    elseif (v == RANDOM_RANK) then
+                        local newRank = math.random(16) - 1
+                        setStatus("Rndm Rank: " .. newRank, 2, false)
+                        setRank(math.random(16) - 1)
+                    elseif (v == INCREASE_RANK) then
+                        increaseRank()
+                    elseif (v == DECREASE_RANK) then
+                        decreaseRank()
+                    elseif (v == MAX_RANK) then
+                        setStatus("Max Rank", 2, false)
+                        maxRank()
+                    elseif (v == DEATH) then
+                        setStatus("Death", 2, false)
+                        death()
+                    elseif (v == LOW_GRAVITY) then
+                        setStatus("Low Gravity", rtime, true)
+                        setGravity(-35, rtime)
+                    else
+                        print("Unknown effect ID: " .. v)
+                    end
+
+                    effectQueue[k] = nil
+                    break
+                end
             end
 	    end
 	end)
 
-    -- Do effect cleanup & run execute followup functions
+    -- Draw HUD
 	emu.register_frame_done(function()
-		-- Don't perform modifications when game/arthur are in certain states to avoid glitches
-		if arthurAvailable(false) then
-            -- Perform followup functions
-            callFuncs(doNext, true)
-        end
+	    if not screen then return end
+	    if not hud then return end
+
+	    if (effectActive) then
+	        if (statusTimer < frames) then
+                resetStatus()
+            end
+
+            local timerInSeconds = 0
+            if (showTimer) then
+                -- statusTimer is actually a future moment measured in frames.
+                -- Calculate seconds remaining until that moment.
+                timerInSeconds = math.ceil((statusTimer - frames) / 60)
+            end
+
+            hud.drawText(screen, statusText, timerInSeconds)
+	    end
 	end)
 end
 

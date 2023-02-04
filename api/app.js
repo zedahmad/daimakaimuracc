@@ -7,11 +7,9 @@ var logger = require('morgan');
 var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');
 
-var app = express();
+const SocketProxy = require('./SocketProxy.js');
 
-// view engine setup
-app.set('views', path.join(__dirname, 'views'));
-app.set('view engine', 'jade');
+var app = express();
 
 app.use(logger('dev'));
 app.use(express.json());
@@ -21,6 +19,18 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/', indexRouter);
 app.use('/users', usersRouter);
+
+// Forward effect IDs to MAME plugin
+app.use('/sendData/:id', (req, res, next) => {
+  let s = app.get('socketProxy');
+
+  if (s) {
+    console.log("Sending " + req.params.id);
+    s.proxyRequest(req.params.id);
+  }
+
+  res.send("");
+})
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
@@ -37,5 +47,7 @@ app.use(function(err, req, res, next) {
   res.status(err.status || 500);
   res.render('error');
 });
+
+app.set('socketProxy', new SocketProxy(3000));
 
 module.exports = app;
