@@ -301,7 +301,7 @@ function daimakaimuracc.startplugin()
             message = message .. " no iframes"
             w16(0xBD36, 0) -- Set invincibility timer to start at 0
 
-            doNextForced({w16, {0xBD36, 0x72}, 4}) -- Queue up iframes reenable
+            doNextForced({w16, {0xBD36, 0x78}, 4}) -- Queue up iframes reenable
         end
 
         print(message)
@@ -384,7 +384,7 @@ function daimakaimuracc.startplugin()
 		w32(0xFF0952, 0xBD34)
 		w16(0xBD36, n * 60) -- Set invincibility timer
 
-		doNext({w16, {0xBD36, n}}) -- Queue up invincibility timer reset
+		doNextForced({w16, {0xBD36, 0x78}, 4}) -- Queue up invincibility timer reset
 	end
 
 	function transform(s)
@@ -599,9 +599,9 @@ function daimakaimuracc.startplugin()
 	    if arthurAvailable(true) then
 	        callFuncs(nextFuncs)
 
-	        if chaosMode then chaos() end
-
             if (not effectActive) then
+                if chaosMode then chaos() end
+
                 for k,v in pairs(effectQueue) do
                     local rtime = math.random(timerRange) + timerOffset
 
