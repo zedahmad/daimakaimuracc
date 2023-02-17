@@ -9,7 +9,7 @@ local daimakaimuracc = exports
 
 function daimakaimuracc.startplugin()
     -- Effects config
-    local chaosMode = true
+    local chaosMode = false
     local chaosTick = 5 -- How frequently to activate random effects, in seconds
     local timerRange = 7 -- Range from 1 to x in seconds to use for effect timers
     local timerOffset = 5 -- Offset in seconds to use for random timer range (1-7 + 5 = 6-12)
@@ -572,7 +572,6 @@ function daimakaimuracc.startplugin()
 	end
 
 	function chaos()
-	    activeFrames = activeFrames + 1
         if (activeFrames % (chaosTick * 60) == 0) then
             -- Logic below is to collapse all rank related effects into 1 chance
             local ef = math.random(14)
@@ -600,6 +599,7 @@ function daimakaimuracc.startplugin()
 	        callFuncs(nextFuncs)
 
             if (not effectActive) then
+                activeFrames = activeFrames + 1
                 if chaosMode then chaos() end
 
                 for k,v in pairs(effectQueue) do
