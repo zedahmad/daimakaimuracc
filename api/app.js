@@ -3,6 +3,7 @@ var express = require('express');
 var path = require('path');
 var cookieParser = require('cookie-parser');
 var logger = require('morgan');
+var cors = require('cors');
 
 var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');
@@ -16,9 +17,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(cors());
 
 app.use('/', indexRouter);
 app.use('/users', usersRouter);
+
+app.set('deathPrice', 1);
 
 // Forward effect IDs to MAME plugin
 app.use('/sendData/:id', (req, res, next) => {
@@ -26,11 +30,26 @@ app.use('/sendData/:id', (req, res, next) => {
 
   if (s) {
     console.log("Sending " + req.params.id);
+	if (req.params.id === '16') {
+		let p = app.get('deathPrice');
+		
+		if (p === 64) {
+			app.set('deathPrice', 100);
+		} else if (p >= 100) {
+			app.set('deathPrice', p + 50);
+		} else {
+			app.set('deathPrice', p * 2);
+		}
+	}
     s.proxyRequest(req.params.id);
   }
 
   res.send("");
 })
+
+app.use('/deathprice', (req, res, next) => {
+	res.send("" + app.get('deathPrice'));
+});
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {

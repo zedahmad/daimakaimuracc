@@ -1,33 +1,48 @@
+import React, { useState, useEffect } from 'react';
 import './App.css';
 import axios from 'axios';
 
 function App() {
-  const sendRequest = (data) => {
-    axios.post('http://localhost:3080/sendData/' + data)
-        .then(r => console.log("donezo: " + r))
-        .catch(e => console.log("yikes" + e));
-  };
+	const [deathPrice, setDeathPrice] = useState(0);
+
+	const sendRequest = (data) => {
+		axios.post('http://localhost:3080/sendData/' + data)
+			.then(r => console.log("donezo: " + r))
+			.catch(e => console.log("yikes" + e));
+  	};
+  
+  	const updateDeathPrice = () => {
+	  	axios.get('http://localhost:3080/deathprice')
+			.then(r => setDeathPrice(r.data))
+			.catch(e => console.log(e))
+			.finally(() => {
+				setTimeout(updateDeathPrice, 1000);
+			});
+  	}
+	
+	useEffect(() => {
+		updateDeathPrice();
+	}, []);
 
   return (
     <div className="App">
-      <h1>Boy I can't wait to style this trash</h1>
-      <button onClick={() => sendRequest(1)}>Random Weapon</button><br />
-      <button onClick={() => sendRequest(2)}>Downgrade Armour</button><br />
-      <button onClick={() => sendRequest(3)}>Upgrade Armour</button><br />
-      <button onClick={() => sendRequest(4)}>Fast Run</button><br />
-      <button onClick={() => sendRequest(5)}>Slow Run</button><br />
-      <button onClick={() => sendRequest(6)}>High Jump</button><br />
-      <button onClick={() => sendRequest(7)}>Low Jump</button><br />
-      <button onClick={() => sendRequest(8)}>Duck Transform</button><br />
-      <button onClick={() => sendRequest(9)}>Old Transform</button><br />
-      <button onClick={() => sendRequest(10)}>Invincibility</button><br />
-      <button onClick={() => sendRequest(11)}>Subtract Time</button><br />
-      <button onClick={() => sendRequest(12)}>Random Rank</button><br />
-      <button onClick={() => sendRequest(13)}>Increase Rank</button><br />
-      <button onClick={() => sendRequest(14)}>Decrease Rank</button><br />
-      <button onClick={() => sendRequest(15)}>Max Rank</button><br />
-      <button onClick={() => sendRequest(16)}>Death</button><br />
-      <button onClick={() => sendRequest(17)}>Low Gravity</button><br />
+      <h1>Donation Menu</h1>
+	  <div className="item"><span className="price">$1</span><span>Random Weapon</span></div>
+	  <div className="item"><span className="price">$2</span><span>Downgrade Armour              </span></div>
+	  <div className="item"><span className="price">$2</span><span>Upgrade Armour                </span></div>
+	  <div className="item"><span className="price">$2</span><span>Temporary Invincibility       </span></div>
+	  <div className="item"><span className="price">$3</span><span>Fast Movement                 </span></div>
+	  <div className="item"><span className="price">$3</span><span>Slow Movement                 </span></div>
+	  <div className="item"><span className="price">$3</span><span>High Jumps                    </span></div>
+	  <div className="item"><span className="price">$3</span><span>Low Jumps                     </span></div>
+	  <div className="item"><span className="price">$3</span><span>Low Gravity                   </span></div>
+	  <div className="item"><span className="price">$2</span><span>Increase Rank                 </span></div>
+	  <div className="item"><span className="price">$2</span><span>Decrease Rank                 </span></div>
+	  <div className="item"><span className="price">$5</span><span>Duck Transformation           </span></div>
+	  <div className="item"><span className="price">$5</span><span>Old Man Transformation        </span></div>
+	  <div className="item death">
+		<span className="deathprice">${ deathPrice }</span><span>Death</span>
+	  </div>
     </div>
   );
 }
