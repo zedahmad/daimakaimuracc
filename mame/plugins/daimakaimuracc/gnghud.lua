@@ -2,11 +2,27 @@ exports = {}
 
 local gnghud = exports
 
--- HUD container extends
-local x1 = 2
-local x2 = 110
-local y1 = 210
-local y2 = 223
+-- Default settings
+gnghud.statusColour = 3
+gnghud.timerColour = 2
+gnghud.pausedColour = 4
+gnghud.hudPositionX = 2
+gnghud.hudPositionY = 210
+gnghud.hudOutline = 0
+gnghud.hudBgColour = 0xAA000000
+
+-- Variables
+local screen
+local goofyR = 0x00220000
+local goofyG = 0x00008800
+local goofyB = 0x000000CC
+local goofyRm = 0x00010000
+local goofyGm = 0x00000100
+local goofyBm = 0x00000001
+
+-- HUD container extent defaults
+local hudWidth = 108
+local hudHeight = 13
 
 -- GnG font palettes
 -- Light orange palette
@@ -39,6 +55,13 @@ local p4 = {
     ["1"] = 0xFFDDDDDD,
     ["2"] = 0xFF888888,
     ["3"] = 0xFFBBBBBB
+}
+
+local palettes = {
+    [1] = p1,
+    [2] = p2,
+    [3] = p3,
+    [4] = p4
 }
 
 local pixelMaps = {
@@ -461,42 +484,6 @@ local pixelMaps = {
     }
 }
 
-function gnghud.drawText(screen, text, timer)
-    -- Draw hud container
-    screen:draw_box(x1, y1, x2, y2, 0, 0xAA000000)
-
-    local xOffset = x1 + 1
-    local yOffset = y1 + 1
-
-    -- Draw letters
-    for c in text:gmatch(".") do
-        xOffset = xOffset + drawLetter(screen, xOffset, yOffset, c, p3)
-    end
-
-    -- Draw timer, right-aligned.  Assumes timer is never greater than 2 digits
-    if (timer ~= nil and timer > 0) then
-        local digit1
-        local digit2
-        local digit1XOffset
-        local digit2XOffset
-
-        if (timer < 10) then
-            digit2 = tostring(timer)
-        else
-            digit1 = tostring(math.floor(timer / 10))
-            digit2 = tostring(timer % 10)
-        end
-
-        local digit2XOffset = x2 - 3 - pixelMaps[digit2][1]
-        drawLetter(screen, digit2XOffset, yOffset, digit2)
-
-        if (timer > 9) then
-            local digit1XOffset = digit2XOffset - pixelMaps[digit1][1]
-            drawLetter(screen, digit1XOffset, yOffset, digit1)
-        end
-    end
-end
-
 function drawLetter(screen, x, y, character, palette)
     if (character == " ") then return 4 end
 
@@ -523,5 +510,80 @@ function drawLetter(screen, x, y, character, palette)
 
     return width
 end
+
+-- Init
+emu.register_start(function()
+    screen = manager.machine.screens[":screen"]
+end)
+
+-- Draw after frame render
+emu.register_frame_done(function()
+    if not screen then return end
+
+    if globalState == nil or globalState.activeEffect == nil then return end
+
+    local effect = globalState.activeEffect
+    local statusPalette = palettes[gnghud.statusColour]
+    local timerPalette = palettes[gnghud.timerColour]
+
+    if (effect.paused) then
+        statusPalette = palettes[gnghud.pausedColour]
+        timerPalette = palettes[gnghud.pausedColour]
+    end
+
+    local x1 = gnghud.hudPositionX
+    local x2 = x1 + hudWidth
+    local y1 = gnghud.hudPositionY
+    local y2 = y1 + hudHeight
+
+    -- Draw hud container
+    if (gnghud.goofyHud) then
+        screen:draw_box(x1, y1, x2, y2, 0, 0xAA000000 + goofyR + goofyG + goofyB)
+    else
+        screen:draw_box(x1, y1, x2, y2, gnghud.hudOutline, gnghud.hudBgColour)
+    end
+
+    local xOffset = x1 + 1
+    local yOffset = y1 + 1
+
+    -- Draw letters
+    for c in effect.text:gmatch(".") do
+        xOffset = xOffset + drawLetter(screen, xOffset, yOffset, c, statusPalette)
+    end
+
+    -- Draw timer, right-aligned.  Assumes timer is never greater than 2 digits
+    if (effect.timed and effect.timer > 0) then
+        local timer = math.ceil(effect.timer / 60)
+        local digit1
+        local digit2
+        local digit1XOffset
+        local digit2XOffset
+
+        if (timer < 10) then
+            digit2 = tostring(timer)
+        else
+            digit1 = tostring(math.floor(timer / 10))
+            digit2 = tostring(timer % 10)
+        end
+
+        local digit2XOffset = x2 - 3 - pixelMaps[digit2][1]
+        drawLetter(screen, digit2XOffset, yOffset, digit2, timerPalette)
+
+        if (timer > 9) then
+            local digit1XOffset = digit2XOffset - pixelMaps[digit1][1]
+            drawLetter(screen, digit1XOffset, yOffset, digit1, timerPalette)
+        end
+    end
+
+    if (gnghud.goofyHud) then
+        goofyR = goofyR + goofyRm
+        goofyG = goofyG + goofyGm
+        goofyB = goofyB + goofyBm
+
+        if goofyR == 0x00FF0000 or goofyR == 0 then goofyRm = goofyRm * -1 end
+        if goofyG == 0x0000FF00 or goofyG == 0 then goofyGm = goofyGm * -1 end
+        if goofyB == 0x000000FF or goofyB == 0 then goofyBm = goofyBm * -1 end
+    end
+end)
 
 return exports
